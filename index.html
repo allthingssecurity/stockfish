@@ -90,10 +90,10 @@
       background-color: rgba(39, 174, 96, 0.4) !important;
     }
     #board .highlight-legal {
-      background: radial-gradient(circle, rgba(0,0,0,0.2) 25%, transparent 25%) !important;
+      background: radial-gradient(circle, rgba(0,0,0,0.25) 20%, transparent 20%) center !important;
     }
     #board .highlight-legal-capture {
-      background: radial-gradient(circle, transparent 50%, rgba(0,0,0,0.2) 50%, rgba(0,0,0,0.2) 60%, transparent 60%) !important;
+      box-shadow: inset 0 0 0 4px rgba(255,0,0,0.5) !important;
     }
     .move-hint {
       font-size: 11px;
@@ -119,7 +119,7 @@
           <button id="newGame" class="btn">New game</button>
         </div>
         <div class="row"><span class="status" id="status">Loading engine...</span></div>
-        <div class="move-hint">Click a piece to select, then click target square. Or drag pieces.</div>
+        <div class="move-hint">Click piece to select, then click target. Or drag pieces.</div>
         <div class="row">
           <div class="log" id="log"></div>
         </div>
@@ -205,29 +205,29 @@
     let pendingMove = null;
     let selectedSquare = null;
 
+    // Track mouse for click vs drag detection
+    let mouseDownSquare = null;
+    let mouseDownTime = 0;
+    let isDragging = false;
+
     const board = Chessboard('board', {
       draggable: true,
       position: 'start',
       pieceTheme: 'https://chessboardjs.com/img/chesspieces/wikipedia/{piece}.png',
       onDragStart: function(source, piece) {
+        isDragging = true;
         if (game.game_over()) return false;
         const turn = game.turn() === 'w' ? 'white' : 'black';
         if (turn !== humanPlays) return false;
         if (humanPlays === 'white' && piece.search(/^b/) !== -1) return false;
         if (humanPlays === 'black' && piece.search(/^w/) !== -1) return false;
-
-        // Show legal moves while dragging
-        clearHighlights();
-        selectedSquare = source;
-        highlightSquare(source, 'highlight-source');
-        showLegalMoves(source);
         return true;
       },
       onDrop: function(source, target) {
+        isDragging = false;
         clearHighlights();
         selectedSquare = null;
 
-        // Check for pawn promotion
         const piece = game.get(source);
         let promotion = 'q';
         if (piece && piece.type === 'p') {
@@ -273,37 +273,37 @@
       });
     }
 
-    // Click-to-move functionality
-    $('#board').on('click', '.square-55d63', function(e) {
-      // Prevent if dragging
-      if ($(e.target).closest('.piece-417db').length && e.type === 'click') {
-        // Let the piece click through
-      }
+    function getSquareFromElement(el) {
+      const $el = $(el);
+      if ($el.attr('data-square')) return $el.attr('data-square');
+      const $parent = $el.closest('[data-square]');
+      if ($parent.length) return $parent.attr('data-square');
+      return null;
+    }
 
-      const square = $(this).attr('data-square');
+    function handleSquareClick(square) {
       if (!square) return;
       if (game.game_over()) return;
+      if (engineThinking) return;
 
       const turnColor = game.turn() === 'w' ? 'white' : 'black';
       if (turnColor !== humanPlays) return;
-      if (engineThinking) return;
 
       const piece = game.get(square);
 
-      // If no square selected yet
+      // If no square selected yet - select a piece
       if (!selectedSquare) {
-        // Must click on own piece
         if (!piece || (piece.color === 'w' ? 'white' : 'black') !== humanPlays) return;
 
         clearHighlights();
         selectedSquare = square;
         highlightSquare(square, 'highlight-source');
         showLegalMoves(square);
-        statusEl.textContent = 'Selected ' + square.toUpperCase() + '. Click target square.';
+        statusEl.textContent = 'Selected ' + square.toUpperCase() + ' - click target square';
         return;
       }
 
-      // If clicking same square, deselect
+      // Clicking same square - deselect
       if (selectedSquare === square) {
         clearHighlights();
         selectedSquare = null;
@@ -311,24 +311,23 @@
         return;
       }
 
-      // If clicking another own piece, switch selection
+      // Clicking another own piece - switch selection
       if (piece && (piece.color === 'w' ? 'white' : 'black') === humanPlays) {
         clearHighlights();
         selectedSquare = square;
         highlightSquare(square, 'highlight-source');
         showLegalMoves(square);
-        statusEl.textContent = 'Selected ' + square.toUpperCase() + '. Click target square.';
+        statusEl.textContent = 'Selected ' + square.toUpperCase() + ' - click target square';
         return;
       }
 
-      // Try to make the move
+      // Try to make the move to target square
       const from = selectedSquare;
       const to = square;
       const movingPiece = game.get(from);
 
       let moveObj = { from, to };
 
-      // Handle pawn promotion
       if (movingPiece && movingPiece.type === 'p') {
         if ((movingPiece.color === 'w' && to[1] === '8') || (movingPiece.color === 'b' && to[1] === '1')) {
           moveObj.promotion = prompt('Promote to (q/r/b/n):', 'q') || 'q';
@@ -337,7 +336,7 @@
 
       const move = game.move(moveObj);
       if (move === null) {
-        statusEl.textContent = 'Illegal move. Try again.';
+        statusEl.textContent = 'Illegal move - try again';
         return;
       }
 
@@ -348,6 +347,29 @@
       board.position(game.fen());
       updateStatus();
       setTimeout(makeEngineMove, 100);
+    }
+
+    // Use mousedown/mouseup to detect clicks vs drags
+    $('#board').on('mousedown touchstart', function(e) {
+      mouseDownSquare = getSquareFromElement(e.target);
+      mouseDownTime = Date.now();
+      isDragging = false;
+    });
+
+    $('#board').on('mouseup touchend', function(e) {
+      const elapsed = Date.now() - mouseDownTime;
+      const upSquare = getSquareFromElement(e.target);
+
+      // If quick click (< 200ms) and same square, treat as click
+      if (!isDragging && elapsed < 200 && mouseDownSquare === upSquare && upSquare) {
+        // Use setTimeout to let drag handler finish first
+        setTimeout(function() {
+          handleSquareClick(upSquare);
+        }, 10);
+      }
+
+      mouseDownSquare = null;
+      isDragging = false;
     });
 
     function updateStatus() {
