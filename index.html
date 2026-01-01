@@ -79,6 +79,27 @@
       border-radius: 6px;
       border: 1px solid #d0d7de;
     }
+    /* Click-to-move highlighting */
+    #board .square-55d63 { cursor: pointer; }
+    #board .highlight-source {
+      box-shadow: inset 0 0 0 4px #f39c12 !important;
+      background-color: rgba(243, 156, 18, 0.4) !important;
+    }
+    #board .highlight-target {
+      box-shadow: inset 0 0 0 4px #27ae60 !important;
+      background-color: rgba(39, 174, 96, 0.4) !important;
+    }
+    #board .highlight-legal {
+      background: radial-gradient(circle, rgba(0,0,0,0.2) 25%, transparent 25%) !important;
+    }
+    #board .highlight-legal-capture {
+      background: radial-gradient(circle, transparent 50%, rgba(0,0,0,0.2) 50%, rgba(0,0,0,0.2) 60%, transparent 60%) !important;
+    }
+    .move-hint {
+      font-size: 11px;
+      color: #666;
+      margin-top: 4px;
+    }
   </style>
 </head>
 <body>
@@ -98,6 +119,7 @@
           <button id="newGame" class="btn">New game</button>
         </div>
         <div class="row"><span class="status" id="status">Loading engine...</span></div>
+        <div class="move-hint">Click a piece to select, then click target square. Or drag pieces.</div>
         <div class="row">
           <div class="log" id="log"></div>
         </div>
@@ -132,7 +154,6 @@
       const line = typeof e === 'string' ? e : (e.data || '');
       if (!line) return;
 
-      // Log important messages
       if (!line.startsWith('info') || line.includes('score')) {
         log(line);
       }
@@ -144,7 +165,6 @@
         engineReady = true;
         statusEl.textContent = 'Engine ready';
         log('Engine ready');
-        // If pending move, execute it
         if (pendingMove) {
           const fn = pendingMove;
           pendingMove = null;
@@ -160,6 +180,9 @@
           const move = promo ? { from, to, promotion: promo } : { from, to };
           const result = game.move(move);
           if (result) {
+            clearHighlights();
+            highlightSquare(from, 'highlight-source');
+            highlightSquare(to, 'highlight-target');
             board.position(game.fen());
             updateStatus();
           } else {
@@ -174,13 +197,13 @@
       statusEl.textContent = 'Engine error!';
     };
 
-    // Start UCI
     sendCmd('uci');
 
     // Chess game
     const game = new Chess();
     let humanPlays = 'white';
     let pendingMove = null;
+    let selectedSquare = null;
 
     const board = Chessboard('board', {
       draggable: true,
@@ -192,17 +215,139 @@
         if (turn !== humanPlays) return false;
         if (humanPlays === 'white' && piece.search(/^b/) !== -1) return false;
         if (humanPlays === 'black' && piece.search(/^w/) !== -1) return false;
+
+        // Show legal moves while dragging
+        clearHighlights();
+        selectedSquare = source;
+        highlightSquare(source, 'highlight-source');
+        showLegalMoves(source);
         return true;
       },
       onDrop: function(source, target) {
-        const move = game.move({ from: source, to: target, promotion: 'q' });
+        clearHighlights();
+        selectedSquare = null;
+
+        // Check for pawn promotion
+        const piece = game.get(source);
+        let promotion = 'q';
+        if (piece && piece.type === 'p') {
+          if ((piece.color === 'w' && target[1] === '8') || (piece.color === 'b' && target[1] === '1')) {
+            promotion = prompt('Promote to (q/r/b/n):', 'q') || 'q';
+          }
+        }
+
+        const move = game.move({ from: source, to: target, promotion: promotion });
         if (move === null) return 'snapback';
+
+        highlightSquare(source, 'highlight-source');
+        highlightSquare(target, 'highlight-target');
         updateStatus();
         setTimeout(makeEngineMove, 100);
       },
       onSnapEnd: function() {
         board.position(game.fen());
       }
+    });
+
+    // Helper functions for highlighting
+    function clearHighlights() {
+      $('#board .square-55d63').removeClass('highlight-source highlight-target highlight-legal highlight-legal-capture');
+    }
+
+    function highlightSquare(square, className) {
+      const $square = $('#board .square-55d63[data-square="' + square + '"]');
+      if ($square.length) {
+        $square.addClass(className);
+      }
+    }
+
+    function showLegalMoves(square) {
+      const moves = game.moves({ square: square, verbose: true });
+      moves.forEach(function(move) {
+        const targetPiece = game.get(move.to);
+        if (targetPiece) {
+          highlightSquare(move.to, 'highlight-legal-capture');
+        } else {
+          highlightSquare(move.to, 'highlight-legal');
+        }
+      });
+    }
+
+    // Click-to-move functionality
+    $('#board').on('click', '.square-55d63', function(e) {
+      // Prevent if dragging
+      if ($(e.target).closest('.piece-417db').length && e.type === 'click') {
+        // Let the piece click through
+      }
+
+      const square = $(this).attr('data-square');
+      if (!square) return;
+      if (game.game_over()) return;
+
+      const turnColor = game.turn() === 'w' ? 'white' : 'black';
+      if (turnColor !== humanPlays) return;
+      if (engineThinking) return;
+
+      const piece = game.get(square);
+
+      // If no square selected yet
+      if (!selectedSquare) {
+        // Must click on own piece
+        if (!piece || (piece.color === 'w' ? 'white' : 'black') !== humanPlays) return;
+
+        clearHighlights();
+        selectedSquare = square;
+        highlightSquare(square, 'highlight-source');
+        showLegalMoves(square);
+        statusEl.textContent = 'Selected ' + square.toUpperCase() + '. Click target square.';
+        return;
+      }
+
+      // If clicking same square, deselect
+      if (selectedSquare === square) {
+        clearHighlights();
+        selectedSquare = null;
+        updateStatus();
+        return;
+      }
+
+      // If clicking another own piece, switch selection
+      if (piece && (piece.color === 'w' ? 'white' : 'black') === humanPlays) {
+        clearHighlights();
+        selectedSquare = square;
+        highlightSquare(square, 'highlight-source');
+        showLegalMoves(square);
+        statusEl.textContent = 'Selected ' + square.toUpperCase() + '. Click target square.';
+        return;
+      }
+
+      // Try to make the move
+      const from = selectedSquare;
+      const to = square;
+      const movingPiece = game.get(from);
+
+      let moveObj = { from, to };
+
+      // Handle pawn promotion
+      if (movingPiece && movingPiece.type === 'p') {
+        if ((movingPiece.color === 'w' && to[1] === '8') || (movingPiece.color === 'b' && to[1] === '1')) {
+          moveObj.promotion = prompt('Promote to (q/r/b/n):', 'q') || 'q';
+        }
+      }
+
+      const move = game.move(moveObj);
+      if (move === null) {
+        statusEl.textContent = 'Illegal move. Try again.';
+        return;
+      }
+
+      clearHighlights();
+      highlightSquare(from, 'highlight-source');
+      highlightSquare(to, 'highlight-target');
+      selectedSquare = null;
+      board.position(game.fen());
+      updateStatus();
+      setTimeout(makeEngineMove, 100);
     });
 
     function updateStatus() {
@@ -264,6 +409,8 @@
       board.start();
       engineThinking = false;
       pendingMove = null;
+      selectedSquare = null;
+      clearHighlights();
       if (engineReady) {
         sendCmd('ucinewgame');
         sendCmd('isready');
