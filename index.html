@@ -208,14 +208,15 @@
     // Track mouse for click vs drag detection
     let mouseDownSquare = null;
     let mouseDownTime = 0;
-    let isDragging = false;
+    let mouseDownX = 0;
+    let mouseDownY = 0;
+    let dragMoveOccurred = false;
 
     const board = Chessboard('board', {
       draggable: true,
       position: 'start',
       pieceTheme: 'https://chessboardjs.com/img/chesspieces/wikipedia/{piece}.png',
       onDragStart: function(source, piece) {
-        isDragging = true;
         if (game.game_over()) return false;
         const turn = game.turn() === 'w' ? 'white' : 'black';
         if (turn !== humanPlays) return false;
@@ -224,25 +225,29 @@
         return true;
       },
       onDrop: function(source, target) {
-        isDragging = false;
-        clearHighlights();
-        selectedSquare = null;
+        // If dropped on different square, it's a real drag move
+        if (source !== target) {
+          dragMoveOccurred = true;
+          clearHighlights();
+          selectedSquare = null;
 
-        const piece = game.get(source);
-        let promotion = 'q';
-        if (piece && piece.type === 'p') {
-          if ((piece.color === 'w' && target[1] === '8') || (piece.color === 'b' && target[1] === '1')) {
-            promotion = prompt('Promote to (q/r/b/n):', 'q') || 'q';
+          const piece = game.get(source);
+          let promotion = 'q';
+          if (piece && piece.type === 'p') {
+            if ((piece.color === 'w' && target[1] === '8') || (piece.color === 'b' && target[1] === '1')) {
+              promotion = prompt('Promote to (q/r/b/n):', 'q') || 'q';
+            }
           }
+
+          const move = game.move({ from: source, to: target, promotion: promotion });
+          if (move === null) return 'snapback';
+
+          highlightSquare(source, 'highlight-source');
+          highlightSquare(target, 'highlight-target');
+          updateStatus();
+          setTimeout(makeEngineMove, 100);
         }
-
-        const move = game.move({ from: source, to: target, promotion: promotion });
-        if (move === null) return 'snapback';
-
-        highlightSquare(source, 'highlight-source');
-        highlightSquare(target, 'highlight-target');
-        updateStatus();
-        setTimeout(makeEngineMove, 100);
+        // If source === target, it might be a click, let mouseup handle it
       },
       onSnapEnd: function() {
         board.position(game.fen());
@@ -353,15 +358,15 @@
     $('#board').on('mousedown touchstart', function(e) {
       mouseDownSquare = getSquareFromElement(e.target);
       mouseDownTime = Date.now();
-      isDragging = false;
+      dragMoveOccurred = false;
     });
 
     $('#board').on('mouseup touchend', function(e) {
       const elapsed = Date.now() - mouseDownTime;
       const upSquare = getSquareFromElement(e.target);
 
-      // If quick click (< 200ms) and same square, treat as click
-      if (!isDragging && elapsed < 200 && mouseDownSquare === upSquare && upSquare) {
+      // If no drag move occurred and quick click on same square, treat as click
+      if (!dragMoveOccurred && elapsed < 200 && mouseDownSquare === upSquare && upSquare) {
         // Use setTimeout to let drag handler finish first
         setTimeout(function() {
           handleSquareClick(upSquare);
@@ -369,7 +374,7 @@
       }
 
       mouseDownSquare = null;
-      isDragging = false;
+      dragMoveOccurred = false;
     });
 
     function updateStatus() {
