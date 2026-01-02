@@ -246,8 +246,12 @@
           highlightSquare(target, 'highlight-target');
           updateStatus();
           setTimeout(makeEngineMove, 100);
+        } else {
+          // Dropped on same square = click, handle it directly
+          setTimeout(function() {
+            handleSquareClick(source);
+          }, 10);
         }
-        // If source === target, it might be a click, let mouseup handle it
       },
       onSnapEnd: function() {
         board.position(game.fen());
